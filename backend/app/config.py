@@ -6,6 +6,7 @@ booth setup and were not available while building this, so these MUST be
 re-tuned on-site with the real hardware before the demo. See README.md
 "On-site calibration" for the procedure.
 """
+import os
 from pathlib import Path
 
 # --- Paths -------------------------------------------------------------
@@ -18,7 +19,15 @@ REFERENCE_FRAME_PATH = DATA_DIR / "reference_frame.jpg"
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 
 # --- Camera --------------------------------------------------------------
-CAMERA_INDEX = 0
+# KIOSK_FAKE_CAMERA=1 swaps the webcam for a simulated one (app/fake_camera.py);
+# "auto" also cycles empty/product scenes by itself. Uses its own camera index
+# so it never reads or overwrites a real camera's empty-platform reference.
+_FAKE = os.environ.get("KIOSK_FAKE_CAMERA", "").strip().lower()
+FAKE_CAMERA = _FAKE in ("1", "true", "yes", "auto")
+FAKE_CAMERA_AUTO = _FAKE == "auto"
+FAKE_CAMERA_INDEX = 99
+FAKE_CAMERA_DIR = DATA_DIR / "fake_camera"
+CAMERA_INDEX = FAKE_CAMERA_INDEX if FAKE_CAMERA else 0
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 JPEG_QUALITY = 80

@@ -33,6 +33,7 @@ const context = vm.createContext({
   Intl, console,
 });
 vm.runInContext(fs.readFileSync('frontend/static/js/spin-viewer.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync('frontend/static/js/price.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('frontend/static/js/products.js', 'utf8'), context);
 
 (async () => {
@@ -52,5 +53,41 @@ vm.runInContext(fs.readFileSync('frontend/static/js/products.js', 'utf8'), conte
 
   context.closeDetail();
   assert.equal(popup.open, false, 'popup closes');
-  console.log('PASS: showcase grid, video badge, detail popup');
+
+  // Search + category filter.
+  const search = element('searchInput');
+  search.value = 'ผ้า';
+  context.render();
+  assert.equal(grid.children.length, 1, 'search narrows the grid');
+  search.value = 'ผ้า น่าน';
+  context.render();
+  assert.equal(grid.children.length, 1, 'every typed word must match');
+  search.value = 'ผ้า กระเป๋า';
+  context.render();
+  assert.equal(grid.children[0].className, 'showcase-empty', 'no match shows the empty state');
+  grid.children[0].children.at(-1).onclick();
+  assert.equal(search.value, '', 'clear button empties the search');
+  assert.equal(grid.children.length, 2, 'clearing restores every product');
+
+  const chips = element('categoryChips').children;  // ทั้งหมด, คราฟต์, ไม่ระบุหมวด
+  assert.equal(chips.length, 3, 'one chip per category plus "all"');
+  chips[1].onclick();
+  assert.equal(grid.children.length, 1, 'category chip filters the grid');
+  element('categoryChips').children[0].onclick();
+  assert.equal(grid.children.length, 2, '"all" chip shows everything again');
+  // Popup thumbnails: hand-added photos replace the auto-captured angle frames.
+  const angles = Array.from({ length: 10 }, (_, i) => `captures/frames/f${i}.jpg`);
+  const thumbsFor = product => {
+    context.openDetail(product);
+    const strip = element('popupContent').children.find(n => n.className === 'popup-thumbs');
+    context.closeDetail();
+    return strip ? strip.children.length : 0;
+  };
+  assert.equal(thumbsFor({ id: 3, name: 'auto', cover_image_path: 'captures/covers/c.jpg', spin_frames: angles }), 10,
+    '360 + cover + 8 sampled angles when nothing was added by hand');
+  assert.equal(thumbsFor({ id: 4, name: 'manual', cover_image_path: 'captures/covers/c.jpg', spin_frames: angles,
+    gallery: [{ id: 1, path: 'captures/gallery/a.jpg' }, { id: 2, path: 'captures/gallery/b.jpg' }] }), 4,
+    '360 + cover + only the 2 hand-added photos');
+  assert.equal(thumbsFor({ id: 5, name: 'plain', cover_image_path: 'captures/covers/c.jpg' }), 0, 'a single image needs no thumbnail row');
+  console.log('PASS: showcase grid, video badge, detail popup, search and category filter, hand-added gallery');
 })().catch(e => { console.error(e); process.exitCode = 1; });

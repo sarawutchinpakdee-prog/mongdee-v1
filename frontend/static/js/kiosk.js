@@ -3,7 +3,6 @@ const statusBadge = document.getElementById("statusBadge");
 const muteBtn = document.getElementById("muteBtn");
 const popup = document.getElementById("productPopup");
 const popupContent = document.getElementById("popupContent");
-const popupCloseBtn = document.getElementById("popupCloseBtn");
 
 // Line icons (not emoji) so the button renders in the theme's own color
 // instead of the OS's colorful emoji glyphs.
@@ -51,7 +50,14 @@ function formatThaiDate(isoDate) {
 function renderIdle() {
   infoPane.replaceChildren();
   const wrap = el("div", "idle-msg");
+  const logo = el("img", "idle-logo");
+  logo.src = "/static/img/logo.png";
+  logo.alt = "MongDee";
+  wrap.append(logo);
   wrap.append(el("div", "big", "หยิบสินค้าขึ้นมาดูได้เลย"), el("div", "", "ยกสินค้าให้กล้องเห็น ระบบจะแสดงรายละเอียดของชิ้นนั้น"));
+  const steps = el("ol", "idle-steps");
+  for (const text of ["หยิบสินค้าที่สนใจ", "ยกให้กล้องเห็นในกรอบ", "ดูรายละเอียดและวิดีโอบนจอ"]) steps.append(el("li", "", text));
+  wrap.append(steps);
   const browse = el("a", "video-cta", "ดูสินค้าทั้งหมด");
   browse.href = "/products";
   wrap.append(browse);
@@ -155,11 +161,12 @@ function buildDetailFields(container, p) {
   ];
   for (const [label, value] of fields) {
     if (!value) continue;
-    container.append(el("div", "field-label", label));
-    container.append(el("div", "", value));
+    const row = el("div", "spec-row");
+    row.append(el("span", "spec-label", label), el("span", "spec-value", value));
+    container.append(row);
   }
   if (p.story) {
-    container.append(el("div", "field-label", "เรื่องราว"));
+    container.append(el("div", "popup-section-title", "รายละเอียดสินค้า"));
     container.append(el("div", "story", p.story));
   }
 }
@@ -173,13 +180,21 @@ function renderMatched(result) {
   if (img) infoPane.append(img);
 
   infoPane.append(el("div", "product-name", p.name));
-  if (p.price != null) infoPane.append(el("div", "price-tag", `฿${formatMoney(p.price)}`));
+  if (p.price != null) {
+    const priceTag = el("div", "price-tag");
+    priceTag.append(buildPrice(p.price));
+    infoPane.append(priceTag);
+  }
 
   const metaRow = el("div", "meta-row");
   if (p.category) metaRow.append(el("span", "pill", p.category));
-  const confPct = Math.round((result.confidence || 0) * 100);
-  metaRow.append(el("span", "pill ok", result.manually_confirmed ? "ยืนยันโดยผู้ใช้" : `ความคล้าย ${confPct}%`));
-  infoPane.append(metaRow);
+  if (result.manually_confirmed) {
+    metaRow.append(el("span", "pill ok", "ยืนยันโดยผู้ใช้"));
+  } else if (typeof location !== "undefined" && /[?&]debug\b/.test(location.search || "")) {
+    // Similarity is an engineering number, not something customers should see; add ?debug to the URL to show it.
+    metaRow.append(el("span", "pill ok", `ความคล้าย ${Math.round((result.confidence || 0) * 100)}%`));
+  }
+  if (metaRow.childElementCount) infoPane.append(metaRow);
 
   const openBtn = el("button", "match-detail-btn", (p.video_path || p.video_link) ? "ดูรายละเอียด · วิดีโอ" : "ดูรายละเอียด");
   openBtn.type = "button";
@@ -251,22 +266,26 @@ function buildPopupContent(result) {
   popupContent.replaceChildren();
   const p = result.product;
 
+  const head = el("div", "popup-head");
+  if (p.category) head.append(el("span", "pill brand", p.category));
+  head.append(el("h2", "popup-title", p.name));
+  popupContent.append(head);
+
   const media = el("div", "popup-media");
+  const thumbs = el("div", "popup-thumbs");
   const video = buildProductVideo(p, "");
   const embedUrl = !video && p.video_link ? videoEmbedUrl(p.video_link) : null;
   const defaultNode = video || (embedUrl ? buildVideoEmbed(embedUrl, p.name) : productImage(p, ""));
-  mountMediaWithSpinToggle(media, { defaultNode, frameUrls: p.spin_frames, altText: p.name });
+  mountMediaGallery(media, thumbs, { defaultNode, frameUrls: p.spin_frames, galleryUrls: (p.gallery || []).map((g) => g.path), altText: p.name });
   if (media.childElementCount) popupContent.append(media);
+  if (thumbs.childElementCount) popupContent.append(thumbs);
 
   const body = el("div", "popup-body");
-  body.append(el("h2", "popup-title", p.name));
-  if (p.price != null) body.append(el("div", "popup-price", `฿${formatMoney(p.price)}`));
-
-  const metaRow = el("div", "meta-row");
-  if (p.category) metaRow.append(el("span", "pill", p.category));
-  if (metaRow.childElementCount) body.append(metaRow);
-
-  buildDetailFields(body, p);
+  if (p.price != null) {
+    const priceBox = el("div", "popup-price");
+    priceBox.append(buildPrice(p.price));
+    body.append(priceBox);
+  }
 
   const actions = el("div", "popup-actions");
   if (p.video_link && !embedUrl) {
@@ -280,16 +299,24 @@ function buildPopupContent(result) {
     actions.append(videoLink);
   }
   if (p.video_url) {
-    const contactLink = el("a", "video-cta");
+    const contactLink = el("a", "video-cta outline");
     contactLink.href = p.video_url;
     contactLink.target = "_blank";
     contactLink.rel = "noopener";
-    contactLink.append(el("span", "video-cta-icon", "🔗"), el("span", "", "ช่องทางติดต่อ / ข้อมูลเพิ่มเติม"));
+    contactLink.append(el("span", "video-cta-icon", "↗"), el("span", "", "ช่องทางการติดต่อ"));
     actions.append(contactLink);
   }
   if (actions.childElementCount) body.append(actions);
+  buildDetailFields(body, p);
 
   popupContent.append(body);
+
+  const footer = el("div", "popup-footer");
+  const done = el("button", "popup-done", "กลับไปหน้าสแกน");
+  done.type = "button";
+  done.onclick = () => closePopup(true);
+  footer.append(done);
+  popupContent.append(footer);
 }
 
 function openPopup(result, force) {
@@ -317,7 +344,6 @@ function closePopup(userDismissed) {
 }
 
 if (dialogSupported) {
-  popupCloseBtn?.addEventListener("click", () => closePopup(true));
   popup.addEventListener("cancel", (e) => { e.preventDefault(); closePopup(true); });
   // Click on the backdrop (outside the dialog box) closes it.
   popup.addEventListener("click", (e) => {
@@ -348,6 +374,39 @@ async function correctMatch(scanEventId, productId) {
 let lastResultKey = null;
 let recognitionPolling = false;
 
+// The hint under the camera follows what is actually happening instead of
+// always repeating "pick a product up".
+const camHint = document.getElementById("camHint");
+const guideHint = document.getElementById("guideHint");
+const guideSteps = document.getElementById("guideSteps");
+let cameraState = null;          // "empty" | "present" | "offline"
+let recognitionStatus = "idle";
+
+// Step list beside the camera (portrait layout): the current step follows
+// what the system is really doing rather than cycling on a timer.
+const guideItems = ["หยิบสินค้าที่สนใจ", "ยกให้กล้องเห็นในกรอบ", "ดูรายละเอียดและวิดีโอบนจอ"]
+  .map((label) => el("li", "guide-step", label));
+if (guideSteps) guideSteps.append(...guideItems);
+
+function updateCamHint() {
+  let text = "";
+  if (cameraState === "empty") text = "หยิบสินค้าขึ้นมาให้กล้องเห็นในกรอบ";
+  else if (cameraState === "present" && recognitionStatus === "scanning") text = "กำลังสแกน… ถือสินค้าให้นิ่ง ๆ";
+  for (const node of [camHint, guideHint]) {
+    if (!node) continue;
+    node.textContent = text;
+    node.style.display = text ? "" : "none";
+  }
+
+  let active = 0;
+  if (recognitionStatus === "matched") active = 2;
+  else if (cameraState === "present" || recognitionStatus === "scanning") active = 1;
+  guideItems.forEach((item, i) => {
+    item.className = "guide-step" + (i < active ? " done" : i === active ? " active" : "");
+  });
+}
+updateCamHint();
+
 async function pollRecognition() {
   if (recognitionPolling) return;
   recognitionPolling = true;
@@ -355,9 +414,12 @@ async function pollRecognition() {
     const res = await fetch("/api/recognition/current", { cache: "no-store", signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error("connection failed");
     const result = await res.json();
+    recognitionStatus = result.status;
+    updateCamHint();
     const key = JSON.stringify([result.status, result.scan_event_id, result.product?.id, result.updated_at]);
     if (key !== lastResultKey) {
       lastResultKey = key;
+      infoPane.classList.toggle("is-matched", result.status === "matched");
       if (result.status === "matched") {
         renderMatched(result);
         openPopup(result, false);
@@ -372,6 +434,8 @@ async function pollRecognition() {
       }
     }
   } catch (err) {
+    recognitionStatus = "offline";
+    updateCamHint();
     if (lastResultKey !== "offline") {
       lastResultKey = "offline";
       closePopup(false);
@@ -389,6 +453,8 @@ async function pollCameraStatus() {
   try {
     const res = await fetch("/api/camera/status");
     const status = await res.json();
+    cameraState = (!status.camera_open || !status.has_reference) ? "offline" : status.state;
+    updateCamHint();
     if (!status.camera_open) {
       statusBadge.textContent = "ไม่พบกล้อง";
     } else if (!status.has_reference) {
@@ -399,6 +465,8 @@ async function pollCameraStatus() {
 
     applyDetectBoxStatus(detectBox, detectLabel, status);
   } catch (err) {
+    cameraState = "offline";
+    updateCamHint();
     statusBadge.textContent = "เชื่อมต่อไม่ได้";
     detectBox.className = "detect-box";
     detectLabel.textContent = "";

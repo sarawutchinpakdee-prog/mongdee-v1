@@ -40,6 +40,7 @@ const context = vm.createContext({
   },
 });
 vm.runInContext(fs.readFileSync('frontend/static/js/detect-box.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync('frontend/static/js/price.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('frontend/static/js/enroll.js', 'utf8'), context);
 (async () => {
   await new Promise(resolve => setImmediate(resolve));

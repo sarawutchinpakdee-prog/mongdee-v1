@@ -3,6 +3,15 @@ from typing import Optional
 from pydantic import BaseModel, Field, model_validator
 
 
+class GalleryImage(BaseModel):
+    id: int
+    path: str
+
+
+class GalleryOrder(BaseModel):
+    ids: list[int]
+
+
 class ProductOut(BaseModel):
     id: int
     name: str
@@ -29,6 +38,9 @@ class ProductOut(BaseModel):
     # kept (see db.get_product_frames) — the frontend falls back to a
     # static cover/thumbnail image in that case.
     spin_frames: list[str] = []
+    # Photos added by hand in the manage page. When present the popup shows
+    # these as its thumbnail row instead of the auto-captured angle frames.
+    gallery: list[GalleryImage] = []
 
 
 class ProductUpdate(BaseModel):
@@ -149,3 +161,22 @@ class AnalyticsSummaryRow(BaseModel):
 class AnalyticsHourlyRow(BaseModel):
     hour: int
     count: int
+
+
+class AnalyticsDailyRow(BaseModel):
+    day: str
+    count: int
+
+
+class AnalyticsOverview(BaseModel):
+    successful: int
+    unmatched: int
+    corrected: int
+    # Matches whose product was deleted later; excluded from every chart.
+    orphaned: int
+    # Start of the "today" period, and whether staff moved it after midnight.
+    day_start: float
+    day_reset: bool
+    success_rate: Optional[float]
+    products_total: int
+    products_scanned: int

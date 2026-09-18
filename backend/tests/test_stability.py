@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import cv2
 import numpy as np
 
-from app import config
+from app import config, db
 from app.camera import CameraManager, CameraSnapshot, PresenceState, build_masked_crop, select_quality_frames
 from app.matching import MatchIndex, MatchResult
 from app.schemas import CalibrationSettings
@@ -208,6 +208,14 @@ class CalibrationTests(unittest.TestCase):
 class ScanTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from app import recognition_loop as loop
+        # Scan code reads product rows; keep it off the project's real database.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        db_patch = patch.multiple(config, DATA_DIR=base, CAPTURES_DIR=base / "captures", DB_PATH=base / "test.db")
+        db_patch.start()
+        self.addCleanup(db_patch.stop)
+        db.init_db()
         self.loop = loop
         self.camera = CameraManager()
         frame = np.random.default_rng(7).integers(0, 255, (120, 160, 3), dtype=np.uint8)

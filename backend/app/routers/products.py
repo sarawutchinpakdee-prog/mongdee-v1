@@ -6,17 +6,21 @@ import zipfile
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from app import config, db, vision
-from app.schemas import ProductOut, ProductUpdate
+from app.admin_auth import require_pin
+from app.camera import imwrite_unicode
+from app.schemas import GalleryOrder, ProductOut, ProductUpdate
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 _COVER_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 _COVER_MAX_BYTES = 8 * 1024 * 1024
 _COVER_MAX_DIM = 1600
+
+GALLERY_MAX_IMAGES = 8  # matches the single thumbnail row in the popup
 
 _VIDEO_EXTENSIONS = {"video/mp4": ".mp4", "video/webm": ".webm", "video/ogg": ".ogv"}
 _VIDEO_MAX_BYTES = 200 * 1024 * 1024
@@ -64,6 +68,10 @@ def _add_product_to_zip(zf: zipfile.ZipFile, row, folder: str = "") -> None:
             continue
         arcname = f"{prefix}{field}{disk_path.suffix}"
         zf.write(disk_path, arcname)
+    for number, image in enumerate(db.list_product_images(product["id"]), start=1):
+        disk_path = config.DATA_DIR / image["path"]
+        if disk_path.is_file():
+            zf.write(disk_path, f"{prefix}gallery/{number:02d}{disk_path.suffix}")
 
 
 @router.get("/export/all")
@@ -150,9 +158,68 @@ async def upload_cover_image(product_id: int, file: UploadFile = File(...)):
     covers_dir = config.CAPTURES_DIR / "covers"
     covers_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4().hex}.jpg"
-    cv2.imwrite(str(covers_dir / filename), img, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+    if not imwrite_unicode(covers_dir / filename, img, [int(cv2.IMWRITE_JPEG_QUALITY), 90]):
+        raise HTTPException(500, "บันทึกภาพปกไม่สำเร็จ กรุณาลองใหม่")
 
     db.set_cover_image(product_id, f"captures/covers/{filename}")
+    return ProductOut(**db.product_out_fields(db.get_product(product_id)))
+
+
+def _decode_photo(raw: bytes, content_type: str):
+    if content_type not in _COVER_CONTENT_TYPES:
+        raise HTTPException(400, "รองรับเฉพาะไฟล์ภาพ JPEG/PNG/WEBP")
+    if len(raw) > _COVER_MAX_BYTES:
+        raise HTTPException(400, "ไฟล์ใหญ่เกินไป (จำกัด 8MB ต่อรูป)")
+    img = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "ไฟล์ภาพไม่ถูกต้องหรือเปิดไม่ได้")
+    h, w = img.shape[:2]
+    if max(h, w) > _COVER_MAX_DIM:
+        scale = _COVER_MAX_DIM / max(h, w)
+        img = cv2.resize(img, (int(w * scale), int(h * scale)))
+    return img
+
+
+@router.post("/{product_id}/images", response_model=ProductOut)
+async def add_gallery_images(product_id: int, files: list[UploadFile] = File(...)):
+    """Adds hand-picked photos to the popup gallery. Every file is validated
+    before anything is saved, so a bad file never leaves a half-added batch."""
+    if not db.get_product(product_id):
+        raise HTTPException(404, "Product not found")
+    existing = len(db.list_product_images(product_id))
+    if existing + len(files) > GALLERY_MAX_IMAGES:
+        raise HTTPException(400, f"เพิ่มรูปได้สูงสุด {GALLERY_MAX_IMAGES} รูปต่อสินค้า (ตอนนี้มี {existing} รูป)")
+
+    decoded = [_decode_photo(await f.read(), f.content_type) for f in files]
+
+    gallery_dir = config.CAPTURES_DIR / "gallery"
+    gallery_dir.mkdir(parents=True, exist_ok=True)
+    for img in decoded:
+        filename = f"{uuid.uuid4().hex}.jpg"
+        if not imwrite_unicode(gallery_dir / filename, img, [int(cv2.IMWRITE_JPEG_QUALITY), 90]):
+            raise HTTPException(500, "บันทึกภาพไม่สำเร็จ กรุณาลองใหม่")
+        db.add_product_image(product_id, f"captures/gallery/{filename}")
+    return ProductOut(**db.product_out_fields(db.get_product(product_id)))
+
+
+@router.put("/{product_id}/images/order", response_model=ProductOut)
+def reorder_gallery_images(product_id: int, body: GalleryOrder):
+    if not db.get_product(product_id):
+        raise HTTPException(404, "Product not found")
+    current = [row["id"] for row in db.list_product_images(product_id)]
+    if sorted(body.ids) != sorted(current):
+        raise HTTPException(400, "รายการรูปไม่ตรงกับที่มีอยู่ กรุณารีเฟรชหน้าแล้วลองใหม่")
+    db.reorder_product_images(product_id, body.ids)
+    return ProductOut(**db.product_out_fields(db.get_product(product_id)))
+
+
+@router.delete("/{product_id}/images/{image_id}", response_model=ProductOut, dependencies=[Depends(require_pin)])
+def delete_gallery_image(product_id: int, image_id: int):
+    image = db.get_product_image(image_id)
+    if not image or image["product_id"] != product_id:
+        raise HTTPException(404, "Image not found")
+    db.delete_product_image(image_id)
+    (config.DATA_DIR / image["path"]).unlink(missing_ok=True)
     return ProductOut(**db.product_out_fields(db.get_product(product_id)))
 
 
@@ -179,7 +246,7 @@ async def upload_product_video(product_id: int, file: UploadFile = File(...)):
     return ProductOut(**db.product_out_fields(db.get_product(product_id)))
 
 
-@router.delete("/{product_id}/video", response_model=ProductOut)
+@router.delete("/{product_id}/video", response_model=ProductOut, dependencies=[Depends(require_pin)])
 def remove_product_video(product_id: int):
     """Reverts the kiosk display back to the cover photo/thumbnail."""
     if not db.get_product(product_id):
@@ -188,11 +255,13 @@ def remove_product_video(product_id: int):
     return ProductOut(**db.product_out_fields(db.get_product(product_id)))
 
 
-@router.delete("/{product_id}")
+@router.delete("/{product_id}", dependencies=[Depends(require_pin)])
 def delete_product(product_id: int):
     row = db.get_product(product_id)
     if not row:
         raise HTTPException(404, "Product not found")
+    for image in db.list_product_images(product_id):
+        (config.DATA_DIR / image["path"]).unlink(missing_ok=True)
     db.delete_product(product_id)
     vision.refresh_match_index()
     return {"ok": True}

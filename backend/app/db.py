@@ -8,6 +8,7 @@ import json
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -51,12 +52,23 @@ CREATE TABLE IF NOT EXISTS scan_events (
     created_at REAL NOT NULL
 );
 
+-- Photos added by hand for the kiosk popup gallery (separate from the
+-- auto-captured angle frames, which are tied to recognition embeddings).
+CREATE TABLE IF NOT EXISTS product_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_embeddings_product ON product_embeddings(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_images_product ON product_images(product_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_scan_events_product ON scan_events(product_id);
 CREATE INDEX IF NOT EXISTS idx_scan_events_created ON scan_events(created_at);
 """
@@ -150,7 +162,48 @@ def product_out_fields(row) -> dict:
     at once."""
     data = dict(row)
     data["spin_frames"] = get_product_frames(data["id"])
+    data["gallery"] = [dict(row) for row in list_product_images(data["id"])]
     return data
+
+
+# --- Hand-added gallery photos -----------------------------------------------
+
+def list_product_images(product_id: int) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, path FROM product_images WHERE product_id = ? ORDER BY sort_order, id",
+            (product_id,),
+        ).fetchall()
+
+
+def add_product_image(product_id: int, path: str) -> int:
+    with get_conn() as conn:
+        position = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM product_images WHERE product_id = ?", (product_id,)
+        ).fetchone()[0]
+        cur = conn.execute(
+            "INSERT INTO product_images (product_id, path, sort_order, created_at) VALUES (?, ?, ?, ?)",
+            (product_id, path, position, time.time()),
+        )
+        return cur.lastrowid
+
+
+def get_product_image(image_id: int) -> Optional[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute("SELECT id, product_id, path FROM product_images WHERE id = ?", (image_id,)).fetchone()
+
+
+def delete_product_image(image_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM product_images WHERE id = ?", (image_id,))
+
+
+def reorder_product_images(product_id: int, ordered_ids: list[int]) -> None:
+    with get_conn() as conn:
+        conn.executemany(
+            "UPDATE product_images SET sort_order = ? WHERE id = ? AND product_id = ?",
+            [(position, image_id, product_id) for position, image_id in enumerate(ordered_ids)],
+        )
 
 
 _EDITABLE_PRODUCT_FIELDS = {
@@ -252,28 +305,167 @@ def correct_scan_event(scan_event_id: int, product_id: int) -> None:
         )
 
 
-def analytics_summary() -> list[sqlite3.Row]:
+# --- Analytics ---------------------------------------------------------------
+# One definition shared by every chart: a "scan" is a match to a product that
+# still exists. Matches whose product was later deleted (product_id NULL) are
+# left out everywhere and only reported as `orphaned`, so the numbers on the
+# report page always add up.
+
+RANGE_DAYS = {"today": 1, "7d": 7, "30d": 30}
+
+
+DAY_RESET_KEY = "report_day_start"
+
+
+def get_day_reset() -> Optional[float]:
+    """When staff last pressed "start a new day" (unix time), if ever."""
+    raw = get_setting(DAY_RESET_KEY)
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
+
+
+def set_day_reset(at: Optional[float] = None) -> float:
+    at = time.time() if at is None else at
+    set_setting(DAY_RESET_KEY, str(at))
+    return at
+
+
+def clear_day_reset() -> None:
+    delete_setting(DAY_RESET_KEY)
+
+
+def range_start(range_key: str = "all", now: Optional[datetime] = None, reset_at: Optional[float] = None) -> float:
+    """Unix time the period starts (local midnight, counting calendar days
+    including today); 0 means all time. "today" starts at the later of local
+    midnight and the last manual "new day" reset — nothing is deleted, the
+    counters just start again from that moment."""
+    days = RANGE_DAYS.get(range_key)
+    if days is None:
+        return 0.0
+    current = now or datetime.now()
+    midnight = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = (midnight - timedelta(days=days - 1)).timestamp()
+    if range_key == "today":
+        reset = reset_at if reset_at is not None else get_day_reset()
+        if reset is not None and start < reset <= current.timestamp():
+            start = reset
+    return start
+
+
+def day_reset_active(now: Optional[datetime] = None) -> bool:
+    """True when today's counters were restarted by hand after midnight."""
+    return range_start("today", now=now) > range_start("today", now=now, reset_at=0.0)
+
+
+def analytics_summary(range_key: str = "all") -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
             """SELECT p.id as product_id, p.name as name, COUNT(s.id) as scan_count,
                       AVG(s.confidence) as avg_confidence, MAX(s.created_at) as last_scan
                FROM products p
-               LEFT JOIN scan_events s ON s.product_id = p.id AND s.matched = 1
+               LEFT JOIN scan_events s ON s.product_id = p.id AND s.matched = 1 AND s.created_at >= ?
                GROUP BY p.id
-               ORDER BY scan_count DESC"""
+               ORDER BY scan_count DESC, p.name""",
+            (range_start(range_key),),
         ).fetchall()
 
 
-def analytics_hourly() -> list[sqlite3.Row]:
+def analytics_hourly(range_key: str = "all") -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
             """SELECT CAST(strftime('%H', created_at, 'unixepoch', 'localtime') AS INTEGER) as hour,
                       COUNT(*) as count
                FROM scan_events
-               WHERE matched = 1
+               WHERE matched = 1 AND product_id IS NOT NULL AND created_at >= ?
                GROUP BY hour
-               ORDER BY hour"""
+               ORDER BY hour""",
+            (range_start(range_key),),
         ).fetchall()
+
+
+def analytics_daily(range_key: str = "all", today: Optional[date] = None) -> list[dict]:
+    """Scans per calendar day, with zero-count days filled in so a chart can
+    draw the window as-is. "all" shows at most the last 60 days."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT strftime('%Y-%m-%d', created_at, 'unixepoch', 'localtime') as day, COUNT(*) as count
+               FROM scan_events
+               WHERE matched = 1 AND product_id IS NOT NULL AND created_at >= ?
+               GROUP BY day ORDER BY day""",
+            (range_start(range_key),),
+        ).fetchall()
+    counts = {r["day"]: r["count"] for r in rows}
+    last = today or date.today()
+    span = RANGE_DAYS.get(range_key)
+    if span:
+        first = last - timedelta(days=span - 1)
+    else:
+        first = date.fromisoformat(min(counts)) if counts else last
+        first = max(first, last - timedelta(days=59))
+    return [
+        {"day": (first + timedelta(days=i)).isoformat(), "count": counts.get((first + timedelta(days=i)).isoformat(), 0)}
+        for i in range((last - first).days + 1)
+    ]
+
+
+def analytics_product_rows(range_key: str = "all") -> list[sqlite3.Row]:
+    """Per-product figures for the exported report (includes category/price)."""
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT p.name AS name, p.category AS category, p.price AS price,
+                      COUNT(s.id) AS scan_count, AVG(s.confidence) AS avg_confidence, MAX(s.created_at) AS last_scan
+               FROM products p
+               LEFT JOIN scan_events s ON s.product_id = p.id AND s.matched = 1 AND s.created_at >= ?
+               GROUP BY p.id
+               ORDER BY scan_count DESC, p.name""",
+            (range_start(range_key),),
+        ).fetchall()
+
+
+def analytics_events(range_key: str = "all") -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT s.created_at AS created_at, s.matched AS matched, s.corrected AS corrected,
+                      s.confidence AS confidence, s.product_id AS product_id, p.name AS product_name
+               FROM scan_events s LEFT JOIN products p ON p.id = s.product_id
+               WHERE s.created_at >= ?
+               ORDER BY s.created_at""",
+            (range_start(range_key),),
+        ).fetchall()
+
+
+def analytics_overview(range_key: str = "all") -> dict:
+    start = range_start(range_key)
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT
+                 SUM(CASE WHEN matched = 1 AND product_id IS NOT NULL THEN 1 ELSE 0 END) AS successful,
+                 SUM(CASE WHEN matched = 0 THEN 1 ELSE 0 END) AS unmatched,
+                 SUM(CASE WHEN corrected = 1 AND product_id IS NOT NULL THEN 1 ELSE 0 END) AS corrected,
+                 SUM(CASE WHEN matched = 1 AND product_id IS NULL THEN 1 ELSE 0 END) AS orphaned
+               FROM scan_events WHERE created_at >= ?""",
+            (start,),
+        ).fetchone()
+        products_total = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        products_scanned = conn.execute(
+            "SELECT COUNT(DISTINCT product_id) FROM scan_events WHERE matched = 1 AND product_id IS NOT NULL AND created_at >= ?",
+            (start,),
+        ).fetchone()[0]
+    successful, unmatched = row["successful"] or 0, row["unmatched"] or 0
+    attempts = successful + unmatched
+    return {
+        "successful": successful,
+        "unmatched": unmatched,
+        "corrected": row["corrected"] or 0,
+        "orphaned": row["orphaned"] or 0,
+        "day_start": range_start("today"),
+        "day_reset": day_reset_active(),
+        "success_rate": successful / attempts if attempts else None,
+        "products_total": products_total,
+        "products_scanned": products_scanned,
+    }
 
 
 # --- Settings (small persisted key/value store, e.g. chosen camera index) --
@@ -282,6 +474,11 @@ def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
     with get_conn() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
         return row["value"] if row else default
+
+
+def delete_setting(key: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
 
 
 def set_setting(key: str, value: str) -> None:

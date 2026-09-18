@@ -6,12 +6,27 @@ import time
 from collections import deque
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 
 from app import config
+
+
+def imread_unicode(path) -> Optional[np.ndarray]:
+    # cv2.imread/imwrite can't open non-ASCII paths on Windows (e.g. a Thai user folder).
+    data = np.fromfile(str(path), dtype=np.uint8)
+    return cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+
+
+def imwrite_unicode(path, image: np.ndarray, params=None) -> bool:
+    ok, buf = cv2.imencode(Path(path).suffix, image, params or [])
+    if not ok:
+        return False
+    buf.tofile(str(path))
+    return True
 
 
 class PresenceState(str, Enum):
@@ -153,13 +168,17 @@ class CameraManager:
 
     def _try_open(self, index: int) -> bool:
         self._last_attempt = time.monotonic()
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap.release()
-            cap = cv2.VideoCapture(index)
-        if not cap.isOpened():
-            cap.release()
-            return False
+        if config.FAKE_CAMERA:
+            from app.fake_camera import FakeCapture
+            cap = FakeCapture()
+        else:
+            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(index)
+            if not cap.isOpened():
+                cap.release()
+                return False
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.FRAME_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.FRAME_HEIGHT)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
@@ -235,7 +254,7 @@ class CameraManager:
             frame = np.median(np.stack(self._recent_frames), axis=0).astype(np.uint8)
             self.reference_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = self.reference_path.with_name(f"reference_camera_{self._index}.tmp.png")
-            if not cv2.imwrite(str(temp_path), frame):
+            if not imwrite_unicode(temp_path, frame):
                 return False
             temp_path.replace(self.reference_path)
             self._reference_frame = frame
@@ -247,7 +266,7 @@ class CameraManager:
 
     def _load_reference_from_disk(self) -> None:
         with self._lock:
-            self._reference_frame = cv2.imread(str(self.reference_path)) if self.reference_path.exists() else None
+            self._reference_frame = imread_unicode(self.reference_path) if self.reference_path.exists() else None
 
     def _diff_ratio(self, frame: np.ndarray, roi=None) -> float:
         if self._reference_frame is None or self._reference_frame.shape != frame.shape:
@@ -385,6 +404,9 @@ camera_manager = CameraManager()
 
 
 def list_camera_devices(max_probe: int = 6) -> list[dict]:
+    if config.FAKE_CAMERA:
+        return [{"index": config.FAKE_CAMERA_INDEX, "active": True,
+                 "width": config.FRAME_WIDTH, "height": config.FRAME_HEIGHT}]
     devices = []
     active_index = camera_manager.index if camera_manager._cap is not None else None
     for idx in range(max_probe):

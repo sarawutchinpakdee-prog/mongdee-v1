@@ -336,7 +336,9 @@ async function loadCatalog() {
         name.append(flag);
       }
       const meta = el("div", "meta");
-      meta.textContent = [product.category, product.price == null ? null : `฿${Number(product.price).toLocaleString("th-TH")}`].filter(Boolean).join(" · ");
+      if (product.category) meta.append(product.category);
+      if (product.category && product.price != null) meta.append(" · ");
+      if (product.price != null) meta.append(buildPrice(product.price));
       info.append(name, meta);
       row.append(info);
       card.append(row);

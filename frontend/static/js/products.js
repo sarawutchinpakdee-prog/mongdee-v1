@@ -4,7 +4,6 @@ const grid = document.getElementById("showcaseGrid");
 const showcaseStatus = document.getElementById("showcaseStatus");
 const popup = document.getElementById("productPopup");
 const popupContent = document.getElementById("popupContent");
-const popupCloseBtn = document.getElementById("popupCloseBtn");
 const dialogSupported = popup && typeof popup.showModal === "function";
 
 let systemMuted = true;
@@ -67,7 +66,13 @@ function videoEmbedUrl(rawUrl) {
 function buildDetail(p) {
   popupContent.replaceChildren();
 
+  const head = el("div", "popup-head");
+  if (p.category) head.append(el("span", "pill brand", p.category));
+  head.append(el("h2", "popup-title", p.name));
+  popupContent.append(head);
+
   const media = el("div", "popup-media");
+  const thumbs = el("div", "popup-thumbs");
   const embedUrl = !p.video_path && p.video_link ? videoEmbedUrl(p.video_link) : null;
   let defaultNode;
   if (p.video_path) {
@@ -89,33 +94,17 @@ function buildDetail(p) {
   } else {
     defaultNode = productImage(p);
   }
-  mountMediaWithSpinToggle(media, { defaultNode, frameUrls: p.spin_frames, altText: p.name });
+  mountMediaGallery(media, thumbs, { defaultNode, frameUrls: p.spin_frames, galleryUrls: (p.gallery || []).map((g) => g.path), altText: p.name });
   if (media.childElementCount) popupContent.append(media);
+  if (thumbs.childElementCount) popupContent.append(thumbs);
 
   const body = el("div", "popup-body");
-  body.append(el("h2", "popup-title", p.name));
-  if (p.price != null) body.append(el("div", "popup-price", `฿${formatMoney(p.price)}`));
-
-  const metaRow = el("div", "meta-row");
-  if (p.category) metaRow.append(el("span", "pill", p.category));
-  if (metaRow.childElementCount) body.append(metaRow);
-
-  const fields = [
-    ["แหล่งที่มา", p.origin],
-    ["วัสดุ", p.material],
-    ["วิธีการผลิต", p.process],
-    ["วันผลิต", p.production_date ? formatThaiDate(p.production_date) : null],
-    ["วันหมดอายุ", p.expiry_date ? formatThaiDate(p.expiry_date) : null],
-  ];
-  for (const [label, value] of fields) {
-    if (!value) continue;
-    body.append(el("div", "field-label", label));
-    body.append(el("div", "", value));
+  if (p.price != null) {
+    const priceBox = el("div", "popup-price");
+    priceBox.append(buildPrice(p.price));
+    body.append(priceBox);
   }
-  if (p.story) {
-    body.append(el("div", "field-label", "เรื่องราว"));
-    body.append(el("div", "story", p.story));
-  }
+
   const actions = el("div", "popup-actions");
   if (p.video_link && !embedUrl) {
     const videoLink = el("a", "video-cta");
@@ -126,15 +115,40 @@ function buildDetail(p) {
     actions.append(videoLink);
   }
   if (p.video_url) {
-    const contactLink = el("a", "video-cta");
+    const contactLink = el("a", "video-cta outline");
     contactLink.href = p.video_url;
     contactLink.target = "_blank";
     contactLink.rel = "noopener";
-    contactLink.append(el("span", "video-cta-icon", "🔗"), el("span", "", "ช่องทางติดต่อ / ข้อมูลเพิ่มเติม"));
+    contactLink.append(el("span", "video-cta-icon", "↗"), el("span", "", "ช่องทางการติดต่อ"));
     actions.append(contactLink);
   }
   if (actions.childElementCount) body.append(actions);
+
+  const fields = [
+    ["แหล่งที่มา", p.origin],
+    ["วัสดุ", p.material],
+    ["วิธีการผลิต", p.process],
+    ["วันผลิต", p.production_date ? formatThaiDate(p.production_date) : null],
+    ["วันหมดอายุ", p.expiry_date ? formatThaiDate(p.expiry_date) : null],
+  ];
+  for (const [label, value] of fields) {
+    if (!value) continue;
+    const row = el("div", "spec-row");
+    row.append(el("span", "spec-label", label), el("span", "spec-value", value));
+    body.append(row);
+  }
+  if (p.story) {
+    body.append(el("div", "popup-section-title", "รายละเอียดสินค้า"));
+    body.append(el("div", "story", p.story));
+  }
   popupContent.append(body);
+
+  const footer = el("div", "popup-footer");
+  const done = el("button", "popup-done", "ปิด");
+  done.type = "button";
+  done.onclick = closeDetail;
+  footer.append(done);
+  popupContent.append(footer);
 }
 
 function openDetail(p) {
@@ -151,7 +165,6 @@ function closeDetail() {
 }
 
 if (dialogSupported) {
-  popupCloseBtn?.addEventListener("click", closeDetail);
   popup.addEventListener("cancel", (e) => { e.preventDefault(); closeDetail(); });
   popup.addEventListener("click", (e) => {
     const box = popup.getBoundingClientRect();
@@ -171,23 +184,110 @@ function card(p) {
 
   const body = el("div", "showcase-body");
   body.append(el("div", "showcase-name", p.name));
-  const meta = [p.category, p.price == null ? null : `฿${formatMoney(p.price)}`].filter(Boolean).join(" · ");
-  body.append(el("div", "showcase-meta", meta || " "));
+  const meta = el("div", "showcase-meta");
+  if (p.category) meta.append(el("span", "", p.category));
+  if (p.category && p.price != null) meta.append(el("span", "meta-sep", " · "));
+  if (p.price != null) meta.append(buildPrice(p.price));
+  if (!meta.childElementCount) meta.textContent = " ";
+  body.append(meta);
   item.append(body);
 
   item.addEventListener("click", () => openDetail(p));
   return item;
 }
 
+const searchInput = document.getElementById("searchInput");
+const categoryChips = document.getElementById("categoryChips");
+const NO_CATEGORY = "__none__";
+const NO_CATEGORY_LABEL = "ไม่ระบุหมวด";
+let allProducts = [];
+let activeCategory = null;  // null = every category
+const cardCache = new Map();
+
+function matchesQuery(p) {
+  const words = ((searchInput && searchInput.value) || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const haystack = [p.name, p.category, p.origin, p.material].filter(Boolean).join(" ").toLowerCase();
+  return words.every((word) => haystack.includes(word));
+}
+
+function categoryKey(p) {
+  return p.category || NO_CATEGORY;
+}
+
+// Category buttons with counts that follow the current search text (so a chip
+// never promises products the search has already filtered out).
+function renderChips() {
+  if (!categoryChips) return;
+  const counts = new Map();
+  for (const p of allProducts) {
+    if (matchesQuery(p)) counts.set(categoryKey(p), (counts.get(categoryKey(p)) || 0) + 1);
+  }
+  if (activeCategory !== null && !counts.has(activeCategory)) counts.set(activeCategory, 0);
+  const keys = [...counts.keys()].sort((a, b) => {
+    if (a === NO_CATEGORY) return 1;
+    if (b === NO_CATEGORY) return -1;
+    return counts.get(b) - counts.get(a) || a.localeCompare(b, "th");
+  });
+  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+
+  const chip = (key, label, count) => {
+    const button = el("button", key === activeCategory ? "chip active" : "chip");
+    button.type = "button";
+    button.append(el("span", "", label), el("span", "chip-count", String(count)));
+    button.onclick = () => { activeCategory = key; render(); };
+    return button;
+  };
+  categoryChips.replaceChildren(
+    chip(null, "ทั้งหมด", total),
+    ...keys.map((key) => chip(key, key === NO_CATEGORY ? NO_CATEGORY_LABEL : key, counts.get(key))),
+  );
+}
+
+function clearFilters() {
+  if (searchInput) searchInput.value = "";
+  activeCategory = null;
+  render();
+  if (searchInput && searchInput.focus) searchInput.focus();
+}
+
+function emptyState() {
+  const box = el("div", "showcase-empty");
+  box.append(el("div", "showcase-empty-title", "ไม่พบสินค้าที่ตรงกับที่ค้นหา"));
+  box.append(el("div", "hint", "ลองใช้คำอื่น หรือเลือกหมวดหมู่ “ทั้งหมด”"));
+  const reset = el("button", "secondary", "ล้างตัวกรอง");
+  reset.type = "button";
+  reset.onclick = clearFilters;
+  box.append(reset);
+  return box;
+}
+
+function render() {
+  const visible = allProducts.filter((p) => matchesQuery(p) && (activeCategory === null || categoryKey(p) === activeCategory));
+  renderChips();
+  if (visible.length) {
+    grid.replaceChildren(...visible.map((p) => {
+      if (!cardCache.has(p.id)) cardCache.set(p.id, card(p));
+      return cardCache.get(p.id);
+    }));
+  } else if (allProducts.length) {
+    grid.replaceChildren(emptyState());
+  } else {
+    grid.replaceChildren();
+  }
+  showcaseStatus.textContent = allProducts.length
+    ? `แสดง ${visible.length} จาก ${allProducts.length} รายการ · คลิกที่สินค้าเพื่อดูรายละเอียดและวิดีโอ`
+    : "ยังไม่มีสินค้าในระบบ";
+}
+
+if (searchInput) searchInput.addEventListener("input", render);
+
 async function load() {
   try {
     const res = await fetch("/api/products", { cache: "no-store" });
     if (!res.ok) throw new Error("โหลดรายการสินค้าไม่สำเร็จ");
-    const products = await res.json();
-    grid.replaceChildren(...products.map(card));
-    showcaseStatus.textContent = products.length
-      ? "แตะที่สินค้าเพื่อดูรายละเอียดและวิดีโอ"
-      : "ยังไม่มีสินค้าในระบบ";
+    allProducts = await res.json();
+    render();
   } catch (err) {
     showcaseStatus.textContent = err.message;
   }

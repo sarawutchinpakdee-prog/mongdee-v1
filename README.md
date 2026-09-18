@@ -121,6 +121,29 @@ Pages:
 - `/dashboard` — scan reports (most-viewed products, busiest hours)
 - `/calibrate` — live ROI/sensitivity tuning + "capture empty platform" reference
 
+## Developing without a camera
+
+Double-click `start-fake.bat` (or set `KIOSK_FAKE_CAMERA=1`; `auto` cycles
+empty/product scenes by itself). A simulated camera (`backend/app/fake_camera.py`)
+replaces the webcam: it shows an empty turntable and can place a "rotating"
+product on it, so calibration, enrollment and recognition all run end to end.
+Switch scenes at `http://127.0.0.1:8000/dev/fake-camera`. Products come from
+`backend/data/fake_camera/products/*.jpg|png` (falls back to
+`data/captures/covers`), the empty platform from `data/fake_camera/empty.png`
+(falls back to `data/reference_camera_0.png`). It uses camera index 99, so it
+never touches a real camera's saved reference. Similarity scores from it say
+nothing about real-world accuracy — thresholds still need tuning on site.
+
+## Admin PIN (deleting data)
+
+Deleting a product, a product video or a gallery photo asks for an admin PIN
+(4–12 digits). The server enforces it (`X-Admin-Pin` header), so it can't be
+bypassed from the browser. The first delete asks you to choose the PIN;
+`/manage` has a button to change it. It is stored salted and hashed, and five
+wrong guesses lock the check for a minute. Forgot it? On the kiosk PC run
+`backend\venv\Scripts\python.exe backend\scripts\reset_admin_pin.py`, then
+choose a new one on the next delete.
+
 ## On-site calibration (do this before the demo, with the real hardware)
 
 Do this at `/calibrate` (live sliders, no restart needed) rather than

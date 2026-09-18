@@ -30,6 +30,7 @@ const element = id => {
   return ids.get(id);
 };
 let response = { status: 'idle', updated_at: 1 };
+let cameraState = 'empty';
 let pendingTimeout = null;
 const context = vm.createContext({
   document: { getElementById: element, createElement: tag => new Element(tag), addEventListener() {} },
@@ -38,7 +39,7 @@ const context = vm.createContext({
   fetch: async url => ({
     ok: true,
     json: async () => {
-      if (url === '/api/camera/status') return { camera_open: true, has_reference: true, state: 'empty', box_status: 'none' };
+      if (url === '/api/camera/status') return { camera_open: true, has_reference: true, state: cameraState, box_status: 'none' };
       if (url === '/api/calibration') return { roi: { x: 0.2, y: 0.15, w: 0.6, h: 0.75 }, presence_on_ratio: 0.12, presence_off_ratio: 0.04 };
       return response;
     },
@@ -47,6 +48,7 @@ const context = vm.createContext({
 });
 vm.runInContext(fs.readFileSync('frontend/static/js/detect-box.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('frontend/static/js/spin-viewer.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync('frontend/static/js/price.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('frontend/static/js/kiosk.js', 'utf8'), context);
 
 (async () => {
@@ -93,5 +95,46 @@ vm.runInContext(fs.readFileSync('frontend/static/js/kiosk.js', 'utf8'), context)
   await context.pollRecognition();
   assert.equal(popup.open, false, 'popup does not nag by reopening for the same held product');
 
-  console.log('PASS: video, product swap, reference link, manual label, popup open/close/auto-close');
+  // Customers never see the similarity score.
+  response = { status: 'matched', scan_event_id: 30, updated_at: 30, confidence: 0.66, product: { id: 9, name: 'E', category: 'cat' } };
+  await context.pollRecognition();
+  const shown = pane.children.flatMap(node => [node, ...node.children]).map(node => node.textContent || '');
+  assert(!shown.some(text => text.includes('ความคล้าย')), 'similarity percentage is hidden from customers');
+
+  // The hint under the camera follows the actual state.
+  const hint = element('camHint');
+  cameraState = 'empty';
+  response = { status: 'idle', updated_at: 40 };
+  await context.pollRecognition();
+  await context.pollCameraStatus();
+  assert.equal(hint.textContent, 'หยิบสินค้าขึ้นมาให้กล้องเห็นในกรอบ', 'empty platform asks to pick a product up');
+  assert.notEqual(hint.style.display, 'none');
+  cameraState = 'present';
+  response = { status: 'scanning', updated_at: 41 };
+  await context.pollRecognition();
+  await context.pollCameraStatus();
+  assert(hint.textContent.startsWith('กำลังสแกน'), 'shows scanning while a product is being read');
+  response = { status: 'matched', scan_event_id: 31, updated_at: 42, product: { id: 9, name: 'E' } };
+  await context.pollRecognition();
+  assert.equal(hint.style.display, 'none', 'hint is hidden once a product is shown');
+
+  // The step list beside the camera follows the same states.
+  const steps = element('guideSteps').children;
+  assert.equal(steps.length, 3, 'three how-to steps');
+  assert.equal(steps[2].className, 'guide-step active', 'matched -> step 3 is current');
+  assert.equal(steps[0].className, 'guide-step done', 'earlier steps are marked done');
+  cameraState = 'empty';
+  response = { status: 'idle', updated_at: 50 };
+  await context.pollRecognition();
+  await context.pollCameraStatus();
+  assert.equal(steps[0].className, 'guide-step active', 'empty platform -> step 1 is current');
+  assert.equal(steps[2].className, 'guide-step', 'later steps are plain');
+  cameraState = 'present';
+  response = { status: 'scanning', updated_at: 51 };
+  await context.pollRecognition();
+  await context.pollCameraStatus();
+  assert.equal(steps[1].className, 'guide-step active', 'scanning -> step 2 is current');
+  assert.equal(steps[0].className, 'guide-step done');
+
+  console.log('PASS: video, product swap, reference link, manual label, popup, hidden similarity, camera hint');
 })().catch(error => { console.error(error); process.exitCode = 1; });

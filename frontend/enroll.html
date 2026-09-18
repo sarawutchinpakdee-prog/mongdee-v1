@@ -2,7 +2,7 @@
 <link rel="stylesheet" href="/static/css/style.css">
 
 <div class="topnav">
-  <a class="brand" href="/">MONGDEE <span>MINI KIOSK</span></a>
+  <a class="brand" href="/"><img class="brand-logo" src="/static/img/logo.png" alt="MongDee"> <span>MINI KIOSK</span></a>
   <nav>
     <a href="/">จอแสดงผล</a>
     <a href="/enroll" class="active">เพิ่มสินค้า</a>
@@ -64,7 +64,7 @@
           <div class="field"><label>วันผลิต</label><input name="production_date" type="date"></div>
           <div class="field"><label>วันหมดอายุ</label><input name="expiry_date" type="date"></div>
         </div>
-        <div class="field"><label>เรื่องราวของสินค้า</label><textarea name="story" rows="4"></textarea></div>
+        <div class="field"><label>รายละเอียดสินค้า</label><textarea name="story" rows="4"></textarea></div>
         <div class="field"><label>ลิงก์วิดีโอนำเสนอ (YouTube ฯลฯ)</label><input name="video_link" type="url" placeholder="https://..."></div>
         <div class="field"><label>ลิงก์ช่องทางติดต่อ / ข้อมูลเพิ่มเติม</label><input name="video_url" type="url" placeholder="https://..."></div>
         <div class="button-row">
@@ -89,5 +89,8 @@
   </section>
 </div>
 
+<script src="/static/js/ui-sound.js"></script>
+<script src="/static/js/media-fallback.js"></script>
 <script src="/static/js/detect-box.js"></script>
+<script src="/static/js/price.js"></script>
 <script src="/static/js/enroll.js"></script>

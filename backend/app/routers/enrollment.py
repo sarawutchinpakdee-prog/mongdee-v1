@@ -110,7 +110,7 @@ def _confirm_enrollment(session_id: str, body: EnrollConfirmRequest):
     for fid in selected_ids:
         name = f"{uuid.uuid4().hex}.jpg"
         cropped = camera_module.crop_to_roi(frames_by_id[fid])
-        if not cv2.imwrite(str(frames_dir / name), cropped):
+        if not camera_module.imwrite_unicode(frames_dir / name, cropped):
             raise HTTPException(500, "บันทึกภาพสินค้าไม่สำเร็จ กรุณาลองใหม่")
         frame_paths.append(f"captures/frames/{name}")
 
