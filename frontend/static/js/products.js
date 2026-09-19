@@ -161,6 +161,10 @@ function closeDetail() {
   if (!dialogSupported) return;
   const video = popupContent.querySelector("video");
   if (video) video.pause();
+  // Closing the <dialog> does not stop an embedded YouTube/Vimeo/Facebook
+  // iframe — it keeps playing (and its audio keeps going) in the background
+  // until the page reloads unless its src is cleared here.
+  for (const iframe of popupContent.querySelectorAll("iframe")) iframe.src = "about:blank";
   if (popup.open) popup.close();
 }
 

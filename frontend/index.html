@@ -11,6 +11,7 @@
   <main class="kiosk">
     <section class="cam-pane" aria-label="กล้องสแกนสินค้า">
       <div class="cam-stage">
+        <img class="cam-blur-bg" src="/api/camera/stream" alt="" aria-hidden="true">
         <div class="cam-frame" id="camFrame">
           <div class="cam-crop" id="camCrop">
             <img id="kioskCamera" src="/api/camera/stream" alt="ภาพสดจากกล้องสำหรับสแกนสินค้า">
@@ -20,14 +21,16 @@
         <div class="status-badge" id="statusBadge" role="status">กำลังเชื่อมต่อ…</div>
         <span class="cam-hint" id="camHint">หยิบสินค้าขึ้นมาให้กล้องเห็นในกรอบ</span>
       </div>
+    </section>
+
+    <div class="guide-pane">
       <aside class="cam-guide" aria-label="ขั้นตอนการใช้งาน">
         <div class="guide-title">วิธีใช้งาน</div>
         <ol class="guide-steps" id="guideSteps"></ol>
         <div class="guide-hint" id="guideHint" role="status"></div>
       </aside>
-    </section>
-
-    <section class="info-pane" id="infoPane" aria-live="polite" aria-label="รายละเอียดสินค้า"></section>
+      <section class="info-pane" id="infoPane" aria-live="polite" aria-label="รายละเอียดสินค้า"></section>
+    </div>
   </main>
 
   <dialog id="productPopup" class="product-popup" aria-label="รายละเอียดสินค้า">

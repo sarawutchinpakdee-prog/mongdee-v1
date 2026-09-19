@@ -257,10 +257,8 @@ function renderUnknown(result) {
 // --- Pop-up shown when a held product is recognized --------------------
 
 const dialogSupported = popup && typeof popup.showModal === "function";
-const POPUP_AUTO_CLOSE_MS = 30000;  // a kiosk popup must not camp on screen forever
 let popupProductId = null;      // product currently in the popup
 let popupDismissedId = null;    // product the customer closed the popup on
-let popupTimer = null;
 
 function buildPopupContent(result) {
   popupContent.replaceChildren();
@@ -327,19 +325,21 @@ function openPopup(result, force) {
   popupDismissedId = null;
   buildPopupContent(result);
   if (!popup.open) popup.showModal();
-  // Return to the live view on its own even if the customer keeps standing
-  // in front of the camera (which holds the backend in "matched").
-  clearTimeout(popupTimer);
-  popupTimer = setTimeout(() => closePopup(true), POPUP_AUTO_CLOSE_MS);
+  // No auto-close timer: stays open however long the customer keeps holding
+  // the product, however long that is — it only closes when they set the
+  // product down (pollRecognition below), or close it themselves.
 }
 
 function closePopup(userDismissed) {
   if (!dialogSupported) return;
-  clearTimeout(popupTimer);
   if (userDismissed && popupProductId != null) popupDismissedId = popupProductId;
   popupProductId = null;
   const video = popupContent.querySelector("video");
   if (video) video.pause();
+  // Closing the <dialog> does not stop an embedded YouTube/Vimeo/Facebook
+  // iframe — it keeps playing (and its audio keeps going) in the background
+  // until the page reloads unless its src is cleared here.
+  for (const iframe of popupContent.querySelectorAll("iframe")) iframe.src = "about:blank";
   if (popup.open) popup.close();
 }
 
@@ -424,6 +424,9 @@ async function pollRecognition() {
         renderMatched(result);
         openPopup(result, false);
       } else {
+        // Lifting the product away closes the popup on its own (no need to
+        // hunt for a close button); it just never times out on its own
+        // while the product is still in view — see openPopup.
         closePopup(false);
         popupDismissedId = null;
         if (result.status === "idle") renderIdle();

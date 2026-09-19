@@ -12,10 +12,25 @@ class Element {
     this.renders = 0;
     this.open = false;
   }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = nodes; this.renders++; }
+  append(...nodes) {
+    for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = this; }
+    this.children.push(...nodes);
+  }
+  replaceChildren(...nodes) {
+    for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = this; }
+    this.children = nodes;
+    this.renders++;
+  }
   addEventListener() {}
-  querySelector() { return null; }
+  querySelectorAll(selector) {
+    const tag = selector.toLowerCase();
+    const out = [];
+    const walk = node => { for (const c of node.children) { if (c.tag === tag) out.push(c); walk(c); } };
+    walk(this);
+    return out;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  pause() {}
   get childElementCount() { return this.children.length; }
   showModal() { this.open = true; }
   close() { this.open = false; }
@@ -44,7 +59,7 @@ const context = vm.createContext({
       return response;
     },
   }),
-  setInterval() {}, setTimeout(fn) { pendingTimeout = fn; return 1; }, clearTimeout() { pendingTimeout = null; }, AbortSignal, Intl, console,
+  setInterval() {}, setTimeout(fn) { pendingTimeout = fn; return 1; }, clearTimeout() { pendingTimeout = null; }, AbortSignal, Intl, URL, console,
 });
 vm.runInContext(fs.readFileSync('frontend/static/js/detect-box.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('frontend/static/js/spin-viewer.js', 'utf8'), context);
@@ -71,29 +86,62 @@ vm.runInContext(fs.readFileSync('frontend/static/js/kiosk.js', 'utf8'), context)
   await context.pollRecognition();
   assert(pane.children.flatMap(node => node.children).some(node => node.textContent === 'ยืนยันโดยผู้ใช้'));
 
-  // The held-product popup opens on a confident match and closes when the
-  // product leaves the frame.
+  // The held-product popup opens on a confident match and closes on its own
+  // as soon as the product is lifted away (no need to hunt for a close
+  // button) — but it never times out on its own while still held, however
+  // long that is.
   const popup = element('productPopup');
   response = { status: 'matched', scan_event_id: 9, updated_at: 9, confidence: 0.8, product: { id: 7, name: 'C', story: 'tale', video_url: 'https://v' } };
   await context.pollRecognition();
   assert.equal(popup.open, true, 'popup opens on a confident match');
   assert(element('popupContent').children.length > 0, 'popup has detail content');
-  response = { status: 'idle', updated_at: 10 };
+  assert.equal(pendingTimeout, null, 'no auto-close timer is armed');
+  response = { ...response, updated_at: 10 };  // still matched, same product
   await context.pollRecognition();
-  assert.equal(popup.open, false, 'popup closes once the product is put down');
+  assert.equal(popup.open, true, 'still open no matter how long the same product is held');
+  assert.equal(pendingTimeout, null, 'still no auto-close timer while held');
+  response = { status: 'idle', updated_at: 11 };
+  await context.pollRecognition();
+  assert.equal(popup.open, false, 'popup closes on its own once the product is put down');
 
-  // Auto-close: the customer keeps standing in front of the camera so the
-  // backend stays "matched" — the popup must still time out on its own and
-  // not immediately reopen for the same product.
+  // Manually closing while still holding the product must not nag by
+  // reopening for that same product on the next poll, but taking it away and
+  // placing a genuinely different one still opens fresh.
   response = { status: 'matched', scan_event_id: 20, updated_at: 20, confidence: 0.8, product: { id: 8, name: 'D' } };
   await context.pollRecognition();
   assert.equal(popup.open, true, 'popup opens for the held product');
-  assert.equal(typeof pendingTimeout, 'function', 'an auto-close timer was armed');
-  pendingTimeout();  // fire the timeout
-  assert.equal(popup.open, false, 'popup auto-closes after the timeout');
+  context.closePopup(true);
   response = { ...response, updated_at: 21 };  // still matched, same product
   await context.pollRecognition();
-  assert.equal(popup.open, false, 'popup does not nag by reopening for the same held product');
+  assert.equal(popup.open, false, 'dismissed popup does not reopen for the same held product');
+  response = { status: 'idle', updated_at: 22 };
+  await context.pollRecognition();
+  response = { status: 'matched', scan_event_id: 23, updated_at: 23, confidence: 0.8, product: { id: 12, name: 'X' } };
+  await context.pollRecognition();
+  assert.equal(popup.open, true, 'a different product opens even though the previous one was dismissed');
+
+  // Removing the product (an automatic close) does NOT count as a dismissal —
+  // placing that exact same product again right away still reopens it.
+  response = { status: 'idle', updated_at: 24 };
+  await context.pollRecognition();
+  response = { ...response, status: 'matched', scan_event_id: 23, updated_at: 25, product: { id: 12, name: 'X' } };
+  await context.pollRecognition();
+  assert.equal(popup.open, true, 'auto-close from removal does not suppress reopening the same product');
+
+  // Lifting the product away must also stop an embedded YouTube/Vimeo/
+  // Facebook iframe's playback and audio — closing the <dialog> alone does not.
+  response = {
+    status: 'matched', scan_event_id: 25, updated_at: 26, confidence: 0.8,
+    product: { id: 11, name: 'F', video_link: 'https://www.youtube.com/watch?v=abc123' },
+  };
+  await context.pollRecognition();
+  assert.equal(popup.open, true, 'popup opens for a product with a video link');
+  const iframe = element('popupContent').querySelector('iframe');
+  assert(iframe && iframe.src.includes('abc123'), 'the video link is embedded as an iframe');
+  response = { status: 'idle', updated_at: 27 };
+  await context.pollRecognition();
+  assert.equal(popup.open, false, 'popup closes once the product is lifted away');
+  assert.equal(iframe.src, 'about:blank', 'the iframe is blanked so its audio actually stops');
 
   // Customers never see the similarity score.
   response = { status: 'matched', scan_event_id: 30, updated_at: 30, confidence: 0.66, product: { id: 9, name: 'E', category: 'cat' } };

@@ -10,11 +10,25 @@ class Element {
     this.classList = { toggle() {}, contains() { return false; }, remove() {}, add() {} };
     this.open = false;
   }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = nodes; }
+  append(...nodes) {
+    for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = this; }
+    this.children.push(...nodes);
+  }
+  replaceChildren(...nodes) {
+    for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = this; }
+    this.children = nodes;
+  }
   addEventListener() {}
-  querySelector() { return null; }
+  querySelectorAll(selector) {
+    const tag = selector.toLowerCase();
+    const out = [];
+    const walk = node => { for (const c of node.children) { if (c.tag === tag) out.push(c); walk(c); } };
+    walk(this);
+    return out;
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   getBoundingClientRect() { return { left: 0, right: 0, top: 0, bottom: 0 }; }
+  pause() {}
   get childElementCount() { return this.children.length; }
   showModal() { this.open = true; }
   close() { this.open = false; }
@@ -30,7 +44,7 @@ const context = vm.createContext({
   document: { getElementById: element, createElement: tag => new Element(tag), addEventListener() {} },
   localStorage: { getItem() { return null; }, setItem() {} },
   fetch: async () => ({ ok: true, json: async () => products }),
-  Intl, console,
+  Intl, URL, console,
 });
 vm.runInContext(fs.readFileSync('frontend/static/js/spin-viewer.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync('frontend/static/js/price.js', 'utf8'), context);
@@ -53,6 +67,14 @@ vm.runInContext(fs.readFileSync('frontend/static/js/products.js', 'utf8'), conte
 
   context.closeDetail();
   assert.equal(popup.open, false, 'popup closes');
+
+  // Lifting the product / closing the popup must stop an embedded
+  // YouTube/Vimeo/Facebook iframe — closing the <dialog> alone does not.
+  context.openDetail({ id: 6, name: 'G', video_link: 'https://www.youtube.com/watch?v=xyz789' });
+  const iframe = element('popupContent').querySelector('iframe');
+  assert(iframe && iframe.src.includes('xyz789'), 'the video link is embedded as an iframe');
+  context.closeDetail();
+  assert.equal(iframe.src, 'about:blank', 'the iframe is blanked so its audio actually stops');
 
   // Search + category filter.
   const search = element('searchInput');
