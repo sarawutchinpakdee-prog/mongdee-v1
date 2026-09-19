@@ -267,6 +267,9 @@ function buildPopupContent(result) {
   const head = el("div", "popup-head");
   if (p.category) head.append(el("span", "pill brand", p.category));
   head.append(el("h2", "popup-title", p.name));
+  if (!result.manually_confirmed && result.confidence != null) {
+    head.append(el("span", "pill ok", `ความมั่นใจ ${Math.round(result.confidence * 100)}%`));
+  }
   popupContent.append(head);
 
   const media = el("div", "popup-media");

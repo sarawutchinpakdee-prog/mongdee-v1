@@ -66,7 +66,7 @@ PRESENCE_OFF_FRAMES = 12
 # passively sample frames for a fixed window once a product is detected —
 # long enough that its continuous slow rotation carries multiple angles
 # past the camera.
-BURST_DURATION_S = 9.0  # covers more than one full turntable rotation -> more distinct angles
+BURST_DURATION_S = 7.5  # one full turntable rotation (~7 s) plus the CAPTURE_SETTLE_S delay before sampling starts
 BURST_SAMPLE_INTERVAL_S = 0.5  # ~18 frames per burst
 
 # --- Enrollment ------------------------------------------------------------
@@ -107,7 +107,7 @@ EMBED_COLOR_WEIGHT = 0.4
 # guessing. CNN embeddings of the same object from a different angle/
 # lighting rarely approach 1.0 — expect real matches to land ~0.55-0.85.
 # MUST be tuned against real enrolled products.
-MATCH_CONFIDENCE_THRESHOLD = 0.62
+MATCH_CONFIDENCE_THRESHOLD = 0.75
 TOP_K_CANDIDATES = 3
 # If the top two candidates are within this margin, the match is too close
 # to call, including when the runner-up is just below the threshold.

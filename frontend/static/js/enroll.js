@@ -97,7 +97,7 @@ function applyBatch(sessionId, newFrames) {
 async function runCapture(url, replaceBatch = false) {
   if (busy) return;
   setBusy(true);
-  captureStatus.textContent = "กำลังเก็บภาพ... วางสินค้าไว้บนแท่นและอย่าขยับกล้อง (ประมาณ 7 วินาที)";
+  captureStatus.textContent = "กำลังเก็บภาพ... วางสินค้าไว้บนแท่นและอย่าขยับกล้อง (ประมาณ 8 วินาที)";
   try {
     const res = await fetch(url, { method: "POST" });
     if (!res.ok) {

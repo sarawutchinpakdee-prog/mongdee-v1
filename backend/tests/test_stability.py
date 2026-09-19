@@ -37,7 +37,8 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(self.index.match_burst([[1, 0, 0]]).status, "unstable")
 
     def test_near_tie_below_threshold_is_ambiguous(self):
-        result = MatchResult([(1, 0.63), (2, 0.61)], 10, 1.0, 1.0)
+        top = config.MATCH_CONFIDENCE_THRESHOLD + 0.01
+        result = MatchResult([(1, top), (2, top - 0.02)], 10, 1.0, 1.0)
         self.assertEqual(result.status, "ambiguous")
 
     def test_invalid_and_nonunit_embeddings(self):

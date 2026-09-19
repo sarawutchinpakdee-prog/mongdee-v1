@@ -95,6 +95,8 @@ vm.runInContext(fs.readFileSync('frontend/static/js/kiosk.js', 'utf8'), context)
   await context.pollRecognition();
   assert.equal(popup.open, true, 'popup opens on a confident match');
   assert(element('popupContent').children.length > 0, 'popup has detail content');
+  const popupHead = element('popupContent').children[0];
+  assert(popupHead.children.some(n => n.textContent === 'ความมั่นใจ 80%'), 'popup shows the match percentage');
   assert.equal(pendingTimeout, null, 'no auto-close timer is armed');
   response = { ...response, updated_at: 10 };  // still matched, same product
   await context.pollRecognition();
