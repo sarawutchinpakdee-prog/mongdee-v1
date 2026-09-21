@@ -107,8 +107,8 @@ EMBED_COLOR_WEIGHT = 0.4
 # guessing. CNN embeddings of the same object from a different angle/
 # lighting rarely approach 1.0 — expect real matches to land ~0.55-0.85.
 # MUST be tuned against real enrolled products.
-MATCH_CONFIDENCE_THRESHOLD = 0.75
-TOP_K_CANDIDATES = 3
+MATCH_CONFIDENCE_THRESHOLD = 0.70
+TOP_K_CANDIDATES = 5
 # If the top two candidates are within this margin, the match is too close
 # to call, including when the runner-up is just below the threshold.
 # automatically — a person picks instead of the system guessing.
