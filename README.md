@@ -176,7 +176,7 @@ editing `config.py` by hand:
 backend/app/
   camera.py            presence detection + frame capture (background thread)
   vision.py            MobileNetV3 embeddings + cosine-similarity matching
-  recognition_loop.py  background task: presence change -> capture -> match(3-way) -> log
+  rec   ognition_loop.py  background task: presence change -> capture -> match(3-way) -> log
   enroll_sessions.py   in-memory captured-frames store shared by enrollment + "unknown" handoff
   db.py                SQLite (products, product_embeddings, scan_events)
   routers/
